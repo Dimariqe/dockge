@@ -1,6 +1,9 @@
 services:
   dockge:
-    image: louislam/dockge:1
+    image: dimariqe/dockge
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
     restart: unless-stopped
     ports:
       # Host Port : Container Port
@@ -20,3 +23,4 @@ services:
     environment:
       # Tell Dockge where is your stacks directory
       - DOCKGE_STACKS_DIR=/opt/stacks
+      - DOCKGE_ENABLE_CONSOLE=true
