@@ -360,7 +360,7 @@ export class Stack {
      */
     static async getSingleComposeStatus(composeName : string) : Promise<any[] | null> {
 
-        let res = await childProcessAsync.spawn("docker", [ "ps", "-a", "--filter", `"label=com.docker.compose.project=${composeName}"`, "--format", "json" ], {
+        let res = await childProcessAsync.spawn("docker", [ "ps", "-a", "--filter", `label=com.docker.compose.project=${composeName}`, "--format", "json" ], {
             encoding: "utf-8",
         });
 
@@ -368,7 +368,20 @@ export class Stack {
             return null;
         }
 
-        let composeList = JSON.parse(res.stdout.toString());
+        let composeList = [];
+        let lines = res.stdout.toString().trim().split('\n');
+        
+        for (let line of lines) {
+            line = line.trim();
+            if (line) {
+                try {
+                    let obj = JSON.parse(line);
+                    composeList.push(obj);
+                } catch (e) {
+                    // Skip invalid JSON lines
+                }
+            }
+        }
 
         return composeList;
     }
@@ -378,7 +391,7 @@ export class Stack {
      * First, we need to get the number of containers that are in the exited state
      * Then read all the containers and check if they are exited with status 0 (OK) or something else (Not OK)
      */
-    static async isComposeExitClean(composeStack : any[]) : Promise<number> {
+    static async isComposeExitClean(composeStack : any) : Promise<number> {
             const expectedContainersExited = parseInt(composeStack.Status.split("(")[1].split(")")[0]);
             let cleanlyExitedContainerCount = 0;
 
@@ -411,7 +424,7 @@ export class Stack {
      * Input Example: "exited(1), running(1)"
      * @param status
      */
-    static async statusConvert(composeStack : any[]) : Promise<number> {
+    static async statusConvert(composeStack : any) : Promise<number> {
         if (composeStack.Status.startsWith("created")) {
             return CREATED_STACK;
         } else if (composeStack.Status.includes("exited")) {
