@@ -1,6 +1,7 @@
 <template>
     <router-link :to="url" :class="{ 'dim' : !stack.isManagedByDockge }" class="item">
         <Uptime :stack="stack" :fixed-width="true" class="me-2" />
+        <StackUpdateStatus :stack="stack" :fixed-width="true" class="me-2" />
         <div class="title">
             <span>{{ stackName }}</span>
         </div>
@@ -9,10 +10,12 @@
 
 <script>
 import Uptime from "./Uptime.vue";
+import StackUpdateStatus from "./StackUpdateStatus.vue";
 
 export default {
     components: {
-        Uptime
+        Uptime,
+        StackUpdateStatus
     },
     props: {
         /** Stack this represents */
