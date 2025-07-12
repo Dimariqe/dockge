@@ -37,6 +37,7 @@ export interface Arguments {
 export interface Config extends Arguments {
     dataDir : string;
     stacksDir : string;
+    imageCacheInterval? : number;
 }
 
 export function checkLogin(socket : DockgeSocket) {

@@ -30,6 +30,7 @@ import { Stack } from "./stack";
 import { Cron } from "croner";
 import gracefulShutdown from "http-graceful-shutdown";
 import User from "./models/user";
+import ImageCache from "./models/image-cache";
 import childProcessAsync from "promisify-child-process";
 import { AgentManager } from "./agent-manager";
 import { AgentProxySocketHandler } from "./socket-handlers/agent-proxy-socket-handler";
@@ -155,6 +156,7 @@ export class DockgeServer {
         this.config.dataDir = args.dataDir || process.env.DOCKGE_DATA_DIR || "./data/";
         this.config.stacksDir = args.stacksDir || process.env.DOCKGE_STACKS_DIR || defaultStacksDir;
         this.config.enableConsole = args.enableConsole || process.env.DOCKGE_ENABLE_CONSOLE === "true" || false;
+        this.config.imageCacheInterval = Number(process.env.DOCKGE_IMAGE_CACHE_INTERVAL) || 300; // 5 minutes in seconds
         this.stacksDir = this.config.stacksDir;
 
         log.debug("server", this.config);
@@ -635,6 +637,152 @@ export class DockgeServer {
         });
 
         return list;
+    }
+
+    async getImageInfo(imageName: string): Promise<any> {
+        try {
+            let res = await childProcessAsync.spawn("docker", [ "inspect", imageName ], {
+                encoding: "utf-8",
+            });
+
+            if (!res.stdout) {
+                return null;
+            }
+
+            let imageInfo = JSON.parse(res.stdout.toString());
+            return imageInfo[0] || null;
+        } catch (e) {
+            log.error("getImageInfo", e);
+            return null;
+        }
+    }
+
+    async getRemoteImageInfo(imageName: string): Promise<any> {
+        try {
+            // Check cache first
+            const cacheInterval = this.config.imageCacheInterval || 300; // 5 minutes default
+            const now = Math.floor(Date.now() / 1000);
+            
+            const cachedEntry = await R.findOne("image_cache", "image_name = ? AND last_checked > ?", [
+                imageName,
+                now - cacheInterval
+            ]);
+
+            if (cachedEntry) {
+                log.debug("getRemoteImageInfo", `Using cached digest for ${imageName}: ${cachedEntry.digest}`);
+                return {
+                    digest: cachedEntry.digest
+                };
+            }
+
+            // Parse image name to extract registry, repository and tag
+            let registry = "registry-1.docker.io";
+            let repository = imageName;
+            let tag = "latest";
+
+            // Handle different image name formats
+            if (imageName.includes("/")) {
+                const parts = imageName.split("/");
+                if (parts.length === 2) {
+                    // library/image:tag or user/image:tag
+                    repository = imageName;
+                } else if (parts.length === 3) {
+                    // custom-registry.com/user/image:tag
+                    registry = parts[0];
+                    repository = parts.slice(1).join("/");
+                }
+            } else {
+                // Official image like nginx:tag
+                repository = `library/${imageName}`;
+            }
+
+            // Extract tag if present
+            if (repository.includes(":")) {
+                const parts = repository.split(":");
+                repository = parts[0];
+                tag = parts[1];
+            }
+
+            let digest = null;
+
+            // For Docker Hub, use the registry API
+            if (registry === "registry-1.docker.io") {
+                // Use curl to get manifest instead of fetch
+                const authUrl = `https://auth.docker.io/token?service=registry.docker.io&scope=repository:${repository}:pull`;
+                
+                let authRes = await childProcessAsync.spawn("curl", ["-s", authUrl], {
+                    encoding: "utf-8",
+                });
+
+                if (!authRes.stdout) {
+                    return null;
+                }
+
+                const authData = JSON.parse(authRes.stdout.toString());
+                const token = authData.token;
+
+                if (!token) {
+                    return null;
+                }
+
+                // Get manifest with digest
+                const manifestUrl = `https://registry-1.docker.io/v2/${repository}/manifests/${tag}`;
+                
+                let manifestRes = await childProcessAsync.spawn("curl", [
+                    "-s",
+                    "-H", `Authorization: Bearer ${token}`,
+                    "-H", "Accept: application/vnd.docker.distribution.manifest.v2+json",
+                    "-I",
+                    manifestUrl
+                ], {
+                    encoding: "utf-8",
+                });
+
+                if (!manifestRes.stdout) {
+                    return null;
+                }
+
+                const headers = manifestRes.stdout.toString();
+                const digestMatch = headers.match(/docker-content-digest:\s*([^\r\n]+)/i);
+                
+                if (digestMatch) {
+                    digest = digestMatch[1].trim();
+                }
+            }
+
+            // Update cache with the new digest
+            if (digest) {
+                await R.exec("INSERT OR REPLACE INTO image_cache (image_name, digest, last_checked) VALUES (?, ?, ?)", [
+                    imageName,
+                    digest,
+                    now
+                ]);
+                log.debug("getRemoteImageInfo", `Cached digest for ${imageName}: ${digest}`);
+                
+                return {
+                    digest: digest
+                };
+            }
+
+            return null;
+        } catch (e) {
+            log.error("getRemoteImageInfo", e);
+            return null;
+        }
+    }
+
+    /**
+     * Clean up expired cache entries
+     * Removes entries older than 24 hours
+     */
+    async cleanupImageCache() {
+        try {
+            const cutoffTime = Math.floor(Date.now() / 1000) - (24 * 60 * 60); // 24 hours ago
+            await R.exec("DELETE FROM image_cache WHERE last_checked < ?", [cutoffTime]);
+            log.debug("cleanupImageCache", "Cleaned up expired cache entries");
+        } catch (e) {
+            log.error("cleanupImageCache", e);
+        }
     }
 
     get stackDirFullPath() {

@@ -251,6 +251,44 @@ export class DockerSocketHandler extends AgentSocketHandler {
                 callbackError(e, callback);
             }
         });
+
+        // getImageInfo
+        agentSocket.on("getImageInfo", async (imageName, callback) => {
+            try {
+                checkLogin(socket);
+                
+                if (typeof(imageName) !== "string") {
+                    throw new ValidationError("Image name must be a string");
+                }
+
+                const imageInfo = await server.getImageInfo(imageName);
+                callbackResult({
+                    ok: true,
+                    imageInfo,
+                }, callback);
+            } catch (e) {
+                callbackError(e, callback);
+            }
+        });
+
+        // getRemoteImageInfo
+        agentSocket.on("getRemoteImageInfo", async (imageName, callback) => {
+            try {
+                checkLogin(socket);
+                
+                if (typeof(imageName) !== "string") {
+                    throw new ValidationError("Image name must be a string");
+                }
+
+                const remoteImageInfo = await server.getRemoteImageInfo(imageName);
+                callbackResult({
+                    ok: true,
+                    remoteImageInfo,
+                }, callback);
+            } catch (e) {
+                callbackError(e, callback);
+            }
+        });
     }
 
     async saveStack(server : DockgeServer, name : unknown, composeYAML : unknown, composeENV : unknown, isAdd : unknown) : Promise<Stack> {

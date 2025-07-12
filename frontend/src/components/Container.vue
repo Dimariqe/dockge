@@ -5,6 +5,9 @@
                 <h4>{{ name }}</h4>
                 <div class="image mb-2">
                     <span class="me-1">{{ imageName }}:</span><span class="tag">{{ imageTag }}</span>
+                    <span v-if="imageDigest" class="info-icon ms-2" :class="{ 'update-available': needsUpdate }" :title="imageStatusTooltip">
+                        <font-awesome-icon :icon="imageStatusIcon" />
+                    </span>
                 </div>
                 <div v-if="!isEditMode">
                     <span class="badge me-1" :class="bgStyle">{{ status }}</span>
@@ -166,6 +169,9 @@ export default defineComponent({
     data() {
         return {
             showConfig: false,
+            expandedStats: false,
+            imageInfo: null,
+            remoteImageInfo: null,
         };
     },
     computed: {
@@ -266,13 +272,85 @@ export default defineComponent({
                 return "";
             }
         },
+        imageDigest() {
+            if (this.imageInfo && this.imageInfo.RepoDigests && this.imageInfo.RepoDigests.length > 0) {
+                // Extract the digest part after '@'
+                const digest = this.imageInfo.RepoDigests[0].split('@')[1];
+                return digest;
+            }
+            return "";
+        },
+        imageDigestTooltip() {
+            if (this.imageDigest) {
+                return `Image Digest: ${this.imageDigest}`;
+            }
+            return "";
+        },
+        needsUpdate() {
+            if (!this.imageInfo || !this.remoteImageInfo) {
+                return false;
+            }
+            
+            const localDigest = this.imageDigest;
+            const remoteDigest = this.remoteImageInfo.digest;
+            
+            return localDigest && remoteDigest && localDigest !== remoteDigest;
+        },
+        imageStatusIcon() {
+            return this.needsUpdate ? 'exclamation-circle' : 'info-circle';
+        },
+        imageStatusTooltip() {
+            if (this.needsUpdate) {
+                return `Update available! Local: ${this.imageDigest} | Remote: ${this.remoteImageInfo?.digest || 'unknown'}`;
+            }
+            return this.imageDigestTooltip;
+        },
+        statsInstances() {
+            if (!this.serviceStatus) {
+                return [];
+            }
+
+            return this.serviceStatus
+                .map(s => this.dockerStats[s.name])
+                .filter(s => !!s)
+                .sort((a, b) => a.Name.localeCompare(b.Name));
+        },
+        status() {
+            if (!this.serviceStatus) {
+                return "N/A";
+            }
+            return this.serviceStatus[0].status;
+        }
+    },
+    watch: {
+        'envsubstService.image'() {
+            this.loadImageInfo();
+        }
     },
     mounted() {
         if (this.first) {
             //this.showConfig = true;
         }
+        this.loadImageInfo();
     },
     methods: {
+        async loadImageInfo() {
+            if (this.envsubstService.image) {
+                // Load local image info
+                this.$root.emitAgent(this.endpoint, "getImageInfo", this.envsubstService.image, (res) => {
+                    if (res.ok) {
+                        this.imageInfo = res.imageInfo;
+                    }
+                });
+
+                // Load remote image info
+                this.$root.emitAgent(this.endpoint, "getRemoteImageInfo", this.envsubstService.image, (res) => {
+                    if (res.ok) {
+                        this.remoteImageInfo = res.remoteImageInfo;
+                    }
+                });
+            }
+        },
         parsePort(port) {
             if (this.stack.endpoint) {
                 return parseDockerPort(port, this.stack.primaryHostname);
@@ -297,6 +375,26 @@ export default defineComponent({
         color: #6c757d;
         .tag {
             color: #33383b;
+        }
+        .info-icon {
+            color: #9ca3af;
+            font-size: 0.7rem;
+            cursor: help;
+            opacity: 0.7;
+            
+            &:hover {
+                opacity: 1;
+                color: #6366f1;
+            }
+
+            &.update-available {
+                color: #f59e0b;
+                opacity: 1;
+                
+                &:hover {
+                    color: #d97706;
+                }
+            }
         }
     }
 
